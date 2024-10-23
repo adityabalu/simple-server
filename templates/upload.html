@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Upload</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        #progress-bar {
+            width: 300px;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            margin-top: 10px;
+        }
+        #progress {
+            width: 0%;
+            height: 100%;
+            background-color: #4CAF50;
+            border-radius: 10px;
+            transition: width 0.5s;
+        }
+        .error {
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <h1>Upload a File</h1>
+    <form id="upload-form">
+        <input type="file" name="file" required id="file-input">
+        <input type="password" name="password" placeholder="Set a password" required id="password-input">
+        <input type="submit" value="Upload">
+    </form>
+    <div id="progress-bar" style="display: none;">
+        <div id="progress"></div>
+    </div>
+    <p id="status"></p>
+    <p id="upload-speed"></p>
+
+    <script>
+        const socket = io();
+        const form = document.getElementById('upload-form');
+        const fileInput = document.getElementById('file-input');
+        const passwordInput = document.getElementById('password-input');
+        const progressBar = document.getElementById('progress-bar');
+        const progress = document.getElementById('progress');
+        const status = document.getElementById('status');
+        const uploadSpeed = document.getElementById('upload-speed');
+        let currentTaskId = null;
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const file = fileInput.files[0];
+            const password = passwordInput.value;
+
+            if (!file) {
+                status.textContent = 'No file selected';
+                status.className = 'error';
+                return;
+            }
+
+            progressBar.style.display = 'block';
+            progress.style.width = '0%';
+            status.textContent = 'Starting upload...';
+            uploadSpeed.textContent = '';
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/', true);
+            xhr.setRequestHeader('X-Filename', file.name);
+            xhr.setRequestHeader('X-Password', password);
+            xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+
+            xhr.upload.onprogress = (event) => {
+                if (event.lengthComputable) {
+                    const percentComplete = (event.loaded / event.total) * 100;
+                    progress.style.width = percentComplete + '%';
+                    status.textContent = `Uploading... ${percentComplete.toFixed(2)}%`;
+                }
+            };
+
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    try {
+                        const response = JSON.parse(xhr.responseText);
+                        status.textContent = response.message;
+                        status.className = '';
+                        currentTaskId = response.task_id;
+                    } catch (e) {
+                        status.textContent = 'Error parsing server response';
+                        status.className = 'error';
+                    }
+                } else {
+                    try {
+                        const errorResponse = JSON.parse(xhr.responseText);
+                        status.textContent = `Upload failed: ${errorResponse.error}`;
+                    } catch (e) {
+                        status.textContent = `Upload failed: ${xhr.statusText}`;
+                    }
+                    status.className = 'error';
+                }
+            };
+
+            xhr.onerror = function() {
+                status.textContent = 'Upload failed due to network error';
+                status.className = 'error';
+            };
+
+            xhr.send(file);
+        });
+
+        socket.on('upload_progress', (data) => {
+            console.log('Received progress update:', data);
+            if (data.task_id === currentTaskId) {
+                progress.style.width = `${data.progress}%`;
+                status.textContent = `Uploading... ${data.progress}%`;
+                uploadSpeed.textContent = `Upload speed: ${data.speed}`;
+            }
+        });
+
+        socket.on('upload_complete', (data) => {
+            console.log('Received upload complete:', data);
+            if (data.task_id === currentTaskId) {
+                progress.style.width = '100%';
+                status.textContent = data.message;
+                status.innerHTML += `<br>Download link: <a href="${data.download_link}">${data.download_link}</a>`;
+                uploadSpeed.textContent = '';
+                currentTaskId = null;
+            }
+        });
+
+        socket.on('upload_error', (data) => {
+            console.error('Received upload error:', data);
+            if (data.task_id === currentTaskId) {
+                status.textContent = `Upload error: ${data.error}`;
+                status.className = 'error';
+                uploadSpeed.textContent = '';
+                currentTaskId = null;
+            }
+        });
+    </script>
+</body>
+</html>
